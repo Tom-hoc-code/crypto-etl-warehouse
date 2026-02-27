@@ -1,0 +1,116 @@
+version: "3.8"
+
+services:
+  # ======================
+  # PostgreSQL - Airflow metadata
+  # ======================
+  postgres-airflow:
+    image: postgres:15
+    container_name: postgres-airflow
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres_airflow_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    networks:
+      - de-net
+
+  # ======================
+  # PostgreSQL - Data Warehouse
+  # ======================
+  postgres-dw:
+    image: postgres:15
+    container_name: postgres-dw
+    environment:
+      POSTGRES_USER: dw
+      POSTGRES_PASSWORD: dw
+      POSTGRES_DB: warehouse
+    volumes:
+      - postgres_dw_data:/var/lib/postgresql/data
+    ports:
+      - "5434:5432"
+    networks:
+      - de-net
+
+  # ======================
+  # Airflow Webserver
+  # ======================
+  airflow-webserver:
+    build: .
+    container_name: airflow-webserver
+    depends_on:
+      - postgres-airflow
+    env_file:
+      - airflow.env
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres-airflow:5432/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./spark_jobs:/opt/airflow/spark_jobs
+      - ./data:/opt/airflow/data
+    ports:
+      - "8080:8080"
+    command: webserver
+    networks:
+      - de-net
+
+  # ======================
+  # Airflow Scheduler
+  # ======================
+  airflow-scheduler:
+    build: .
+    container_name: airflow-scheduler
+    depends_on:
+      - airflow-webserver
+    env_file:
+      - airflow.env
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres-airflow:5432/airflow
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./spark_jobs:/opt/airflow/spark_jobs
+      - ./data:/opt/airflow/data
+    command: scheduler
+    networks:
+      - de-net
+
+  # ======================
+  # Spark Master
+  # ======================
+  spark-master:
+    image: apache/spark:3.4.2
+    container_name: spark-master
+    command: >
+      bash -c "/opt/spark/bin/spark-class org.apache.spark.deploy.master.Master"
+    ports:
+      - "8081:8080"
+      - "7077:7077"
+    networks:
+      - de-net
+
+  # ======================
+  # Spark Worker
+  # ======================
+  spark-worker:
+    image: apache/spark:3.4.2
+    container_name: spark-worker
+    depends_on:
+      - spark-master
+    command: >
+      bash -c "/opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077"
+    networks:
+      - de-net
+
+volumes:
+  postgres_airflow_data:
+  postgres_dw_data:
+
+networks:
+  de-net:
+    driver: bridge

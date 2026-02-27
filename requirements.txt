@@ -1,0 +1,6 @@
+pyspark==3.5.1
+requests
+beautifulsoup4
+sqlalchemy
+psycopg2-binary
+pandas
