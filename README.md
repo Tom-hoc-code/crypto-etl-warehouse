@@ -9,7 +9,9 @@ The architecture follows modern Medallion Architecture:
 
 Raw → Staging → Curated → Data Warehouse (Dim / Fact)
 
-<img src="flow-data.png"/>
+<div align="center">
+  <img src="flow-data.png" style="width:100%;"/>
+</div>
 🧱 Data Pipeline Layers
 1️⃣ Raw Layer
 
