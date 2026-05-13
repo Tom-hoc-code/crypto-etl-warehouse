@@ -1,64 +1,160 @@
+# build_facts.py
+
 from pyspark.sql.functions import *
-from spark_session import get_spark
 
-spark = get_spark()
+from utils.spark_session import get_spark_session
 
-CURATED = "data/curated"
-DW = "data/warehouse"
 
-# =======================
+# =========================
+# SPARK
+# =========================
+spark = get_spark_session("Build Facts")
+
+STAGING = "/app/data/staging"
+
+JDBC_URL = "jdbc:postgresql://postgres-dw:5432/warehouse"
+
+PROPS = {
+    "user": "dw",
+    "password": "dw",
+    "driver": "org.postgresql.Driver"
+}
+
+
+# =========================
+# LOAD DIMENSIONS
+# =========================
+dim_coin = (
+    spark.read
+    .jdbc(
+        url=JDBC_URL,
+        table="dim_coin",
+        properties=PROPS
+    )
+    .filter("is_active = true")
+)
+
+dim_date = spark.read.jdbc(
+    url=JDBC_URL,
+    table="dim_date",
+    properties=PROPS
+)
+
+dim_source = spark.read.jdbc(
+    url=JDBC_URL,
+    table="dim_source",
+    properties=PROPS
+)
+
+
+# =========================
 # FACT MARKET
-# =======================
+# =========================
 def build_fact_market():
-    prices = spark.read.parquet(f"{CURATED}/prices")
-    dim_coin = spark.read.parquet(f"{DW}/dim/dim_coin").filter("is_active = true")
-    dim_date = spark.read.parquet(f"{DW}/dim/dim_date")
+
+    coins = spark.read.parquet(f"{STAGING}/coins")
 
     fact = (
-        prices
-        .join(dim_coin, "coin_id")
-        .join(dim_date, prices.date == dim_date.date)
+        coins
+
+        .dropDuplicates([
+            "coin_id",
+            "date"
+        ])
+
+        .join(
+            dim_coin,
+            "coin_id"
+        )
+
+        .join(
+            dim_date,
+            coins.date == dim_date.date
+        )
+
         .select(
-            dim_date.date_sk,
-            dim_coin.coin_sk,
-            prices.price,
-            prices.volume,
-            prices.market_cap
+            dim_date.date_sk.alias("date_sk"),
+
+            dim_coin.coin_sk.alias("coin_sk"),
+
+            coins.price.alias("price"),
+
+            coins.volume.alias("volume"),
+
+            coins.market_cap.alias("market_cap")
         )
     )
 
-    fact.write.mode("overwrite").parquet(f"{DW}/fact/fact_market")
+    (
+        fact.write
+        .jdbc(
+            url=JDBC_URL,
+            table="fact_market",
+            mode="append",
+            properties=PROPS
+        )
+    )
 
 
-# =======================
+# =========================
 # FACT NEWS
-# =======================
+# =========================
 def build_fact_news():
-    news = spark.read.parquet(f"{CURATED}/news")
-    dim_coin = spark.read.parquet(f"{DW}/dim/dim_coin").filter("is_active = true")
-    dim_date = spark.read.parquet(f"{DW}/dim/dim_date")
-    dim_source = spark.read.parquet(f"{DW}/dim/dim_source")
-    dim_author = spark.read.parquet(f"{DW}/dim/dim_author")
+
+    news = spark.read.parquet(f"{STAGING}/news")
 
     fact = (
         news
-        .join(dim_coin, "coin_id")
-        .join(dim_date, news.published_date == dim_date.date)
-        .join(dim_source, "source")
-        .join(dim_author, "author")
+
+        .dropDuplicates([
+            "coin_id",
+            "published_at",
+            "title"
+        ])
+
+        .join(
+            dim_coin,
+            "coin_id"
+        )
+
+        .join(
+            dim_date,
+            news.date == dim_date.date
+        )
+
+        .join(
+            dim_source,
+            "source"
+        )
+
         .groupBy(
             dim_date.date_sk,
             dim_coin.coin_sk,
-            dim_source.source_sk,
-            dim_author.author_sk
+            dim_source.source_sk
         )
-        .agg(count("*").alias("news_count"))
+
+        .agg(
+            count("*").alias("news_count")
+        )
     )
 
-    fact.write.mode("overwrite").parquet(f"{DW}/fact/fact_news")
+    (
+        fact.write
+        .jdbc(
+            url=JDBC_URL,
+            table="fact_news",
+            mode="append",
+            properties=PROPS
+        )
+    )
 
 
+# =========================
+# MAIN
+# =========================
 if __name__ == "__main__":
+
     build_fact_market()
     build_fact_news()
+
     spark.stop()
